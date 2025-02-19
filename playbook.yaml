@@ -1,0 +1,105 @@
+---
+- name: Configure Nextcloud on Ubuntu with PostgreSQL
+  hosts: all
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name:
+          - apache2=2.4.52-1ubuntu4.13
+          - postgresql=14+238
+          - php=2:8.1+92ubuntu1
+          - php-pgsql=2:8.1+92ubuntu1
+          - libapache2-mod-php=2:8.1+92ubuntu1
+          - php-gd=2:8.1+92ubuntu1
+          - php-json=2:8.1+92ubuntu1
+          - php-curl=2:8.1+92ubuntu1
+          - php-zip=2:8.1+92ubuntu1
+          - unzip=6.0-26ubuntu3.2
+        state: present
+        update_cache: yes
+      retries: 5
+      delay: 10
+
+    - name: Start and enable Apache
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Start and enable PostgreSQL
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: Create PostgreSQL database
+      become: yes
+      community.postgresql.postgresql_db:
+        name: nextcloud
+        encoding: UTF-8
+        lc_collate: en_US.UTF-8
+        lc_ctype: en_US.UTF-8
+        state: present
+      vars:
+        ansible_become_method: sudo
+        ansible_become_user: postgres
+
+    - name: Create PostgreSQL user
+      become: yes
+      community.postgresql.postgresql_user:
+        db: nextcloud
+        name: nextcloud
+        password: "nauruz"
+        priv: "ALL"
+        state: present
+      vars:
+        ansible_become_method: sudo
+        ansible_become_user: postgres
+
+    - name: Download and extract Nextcloud
+      unarchive:
+        src: https://download.nextcloud.com/server/releases/latest.zip
+        dest: /var/www/html/
+        remote_src: yes
+
+    - name: Set permissions for Nextcloud
+      file:
+        path: /var/www/html/nextcloud
+        owner: www-data
+        group: www-data
+        recurse: yes
+
+    - name: Run Nextcloud installation wizard
+      command: >
+        sudo -u www-data php /var/www/html/nextcloud/occ maintenance:install
+        --database="pgsql"
+        --database-name="nextcloud"
+        --database-user="nextcloud"
+        --database-pass="nauruz"
+        --admin-user="admin"
+        --admin-pass="admin"
+
+    - name: Enable Apache rewrite module
+      command: a2enmod rewrite
+
+    - name: Enable Apache headers module (required for Nextcloud)
+      command: a2enmod headers
+
+    - name: Enable Apache env module (required for Nextcloud)
+      command: a2enmod env
+
+    - name: Enable Apache dir module (required for Nextcloud)
+      command: a2enmod dir
+
+    - name: Enable Apache mime module (required for Nextcloud)
+      command: a2enmod mime
+
+    - name: Restart Apache
+      service:
+        name: apache2
+        state: restarted
