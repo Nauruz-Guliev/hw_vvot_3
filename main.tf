@@ -7,71 +7,78 @@ terraform {
   }
 }
 
+variable "zone" {
+  type        = string
+  default     = "ru-central1-a"
+}
+
 provider "yandex" {
   token     = var.yc_token
   cloud_id  = var.yc_cloud_id
   folder_id = var.yc_folder_id
-  zone      = "ru-central1-a"
+  zone      = var.zone
 }
 
-resource "yandex_compute_instance" "nextcloud_vm" {
-  name        = "nextcloud-vm"
-  platform_id = "standard-v1"
+data "yandex_compute_image" "ubuntu" {
+  family = "ubuntu-2404-lts-oslogin"
+}
+
+resource "yandex_compute_disk" "boot-disk" {
+  name     = "vvot03-boot-disk"
+  type     = "network-ssd"
+  image_id = data.yandex_compute_image.ubuntu.id
+  size     = 20 
+}
+
+resource "yandex_compute_instance" "server" {
+  name        = "vvot03-server-nextcloud"
+  platform_id = "standard-v3"
+  hostname    = "nextcloud"
+  
   resources {
-    cores  = 2
-    memory = 4
+    core_fraction = 20
+    cores         = 2
+    memory        = 4
   }
 
   boot_disk {
-    initialize_params {
-      image_id = "fd842fimj1jg6vmfee6r"
-      size     = 20
-    }
+    disk_id = yandex_compute_disk.boot-disk.id
   }
 
   network_interface {
-    subnet_id = yandex_vpc_subnet.default.id
+    subnet_id = yandex_vpc_subnet.subnet.id
     nat       = true
   }
 
   metadata = {
     ssh-keys = "ubuntu:${file("~/.ssh/id_rsa.pub")}"
   }
-
-  connection {
-    type        = "ssh"
-    host        = self.network_interface[0].nat_ip_address
-    user        = "ubuntu"
-    private_key = file("~/.ssh/id_rsa")
-  }
-
-  provisioner "remote-exec" {
-    inline = [
-      "sudo apt update",
-      "sudo apt install -y python3"
-    ]
-  }
 }
 
 resource "yandex_vpc_network" "network" {
-  name = "nextcloud-network"
+  name = "vvot03-nextcloud-network"
 }
 
-resource "yandex_vpc_subnet" "default" {
-  name           = "nextcloud-subnet"
-  zone           = "ru-central1-a"
-  network_id     = yandex_vpc_network.network.id
+resource "yandex_vpc_subnet" "subnet" {
+  name           = "vvot03-nextcloud-subnet"
+  zone           = var.zone
   v4_cidr_blocks = ["192.168.10.0/24"]
+  network_id     = yandex_vpc_network.network.id
 }
 
-resource "null_resource" "ansible_provisioning" {
-  depends_on = [yandex_compute_instance.nextcloud_vm]
-
+resource "null_resource" "ansible-provisioner" {
+  depends_on = [yandex_compute_instance.server]
+  # в начале еще 2 минуты подождем, чтобы успело запуститься
   provisioner "local-exec" {
     command = <<EOT
+      sleep 120 
       echo "[nextcloud]" > inventory.ini
-      echo "${yandex_compute_instance.nextcloud_vm.network_interface[0].nat_ip_address} ansible_user=ubuntu" >> inventory.ini
+      echo "${yandex_compute_instance.server.network_interface.0.nat_ip_address} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/id_rsa" >> inventory.ini
       ansible-playbook -i inventory.ini playbook.yaml
     EOT
   }
+}
+
+output "public_ip" {
+  value = yandex_compute_instance.server.network_interface.0.nat_ip_address
 }
