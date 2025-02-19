@@ -1,23 +1,21 @@
-- name: Nextcloud Installation and Configuration
+- name: Установка Nextcloud
   hosts: nextcloud
   become: yes
   vars:
-    db_name: "dbnextcloud"     
-    db_user: "dbuser"       
-    db_password: "dbpassword"  
+    db_name: "dbnextcloud"
+    db_user: "user"    
+    db_password: "password"
     nextcloud_admin_user: "admin" 
-    nextcloud_admin_password: "admin" 
+    nextcloud_admin_password: "admin"  
   tasks:
-    - name: Set Timezone to Europe/Moscow
+    - name: Настройка часового пояса на Москва
       community.general.timezone:
         name: Europe/Moscow
-
-    - name: Update package cache and upgrade system
+    - name: Обновление кэша пакетов
       ansible.builtin.apt:
         update_cache: true
         upgrade: "yes"
-
-    - name: Install required dependencies
+    - name: Установка необходимых зависимостей
       ansible.builtin.apt:
         pkg:
           - apache2
@@ -41,13 +39,11 @@
           - wget
           - bzip2
         state: present
-
-    - name: Install psycopg2 Python library
+    - name: Установка psycopg2
       ansible.builtin.pip:
         extra_args: "--break-system-packages"
         name: psycopg2
-
-    - name: Download and unpack Nextcloud
+    - name: Скачивание и распаковка Nextcloud
       ansible.builtin.unarchive:
         dest: "/var/www/html"
         src: "https://download.nextcloud.com/server/releases/latest-30.tar.bz2"
@@ -55,8 +51,7 @@
         owner: "www-data"
         group: "www-data"
         creates: "/var/www/html/nextcloud"
-
-    - name: Start and enable Apache and PostgreSQL services
+    - name: Запуск и включение Apache и PostgreSQL
       service:
         name: "{{ item }}"
         state: started
@@ -64,8 +59,16 @@
       loop:
         - apache2
         - postgresql
-
-    - name: Create PostgreSQL user for Nextcloud
+    - name: Создание базы данных PostgreSQL
+      community.postgresql.postgresql_db:
+        name: "{{ db_name }}"
+        encoding: "UTF8"
+        lc_collate: "en_US.UTF-8"
+        lc_ctype: "en_US.UTF-8"
+        state: present
+      become: true
+      become_user: postgres
+    - name: Инициализация пользователя PostgreSQL
       become: true
       become_user: postgres
       postgresql_user:
@@ -74,8 +77,17 @@
         db: "{{ db_name }}"
         role_attr_flags: "CREATEDB,LOGIN"
         state: present
-
-    - name: Create PostgreSQL database for Nextcloud
+    - name: Предоставление привилегий пользователю PostgreSQL на схему public
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_privs:
+        database: "{{ db_name }}"
+        state: present
+        privs: ALL
+        type: schema
+        roles: "{{ db_user }}"
+        objs: public
+    - name: Инициализация базы данных PostgreSQL для Nextcloud
       become: true
       become_user: postgres
       postgresql_db:
@@ -84,43 +96,36 @@
         lc_ctype: "en_US.UTF-8"
         lc_collate: "en_US.UTF-8"
         state: present
-
-    - name: Check if PostgreSQL database is initialized
+    - name: Проверка инициализации базы данных
       stat:
         path: /var/lib/pgsql/14/data/pg_hba.conf
       register: result
-
-    - name: Configure Apache for Nextcloud
+    - name: Настройка Apache для Nextcloud
       copy:
         dest: "/etc/apache2/sites-available/nextcloud.conf"
         content: |
           <VirtualHost *:80>
               DocumentRoot "/var/www/html/nextcloud"
-              ServerName vvot3.itiscl.ru
-              ServerAlias 176.52.100.227
-              ServerAlias 2001:db8::1234  # Add IPv6 address
+              ServerName vvot03.itiscl.ru
               <Directory "/var/www/html/nextcloud">
                   Options FollowSymlinks
                   AllowOverride All
                   Require all granted
               </Directory>
-              ErrorLog ${APACHE_LOG_DIR}/vvot3_error.log
-              CustomLog ${APACHE_LOG_DIR}/vvot3_access.log combined
+              ErrorLog ${APACHE_LOG_DIR}/vvot03_error.log
+              CustomLog ${APACHE_LOG_DIR}/vvot03_access.log combined
           </VirtualHost>
-      notify: Restart Apache
-
-    - name: Enable Nextcloud site in Apache
+      notify: Перезапуск Apache
+    - name: Активация сайта Nextcloud
       file:
         src: "/etc/apache2/sites-available/nextcloud.conf"
         dest: "/etc/apache2/sites-enabled/nextcloud.conf"
         state: link
-
-    - name: Check if Nextcloud configuration exists
+    - name: Проверка наличия конфигурации Nextcloud
       stat:
         path: /var/www/html/nextcloud/config/config.php
       register: nextcloud_config
-
-    - name: Configure Nextcloud using occ command
+    - name: Настройка конфигурации Nextcloud
       shell: |
         cd /var/www/html/nextcloud
         sudo -u www-data php occ maintenance:install \
@@ -131,22 +136,15 @@
           --admin-user "{{ nextcloud_admin_user }}" \
           --admin-pass "{{ nextcloud_admin_password }}"
       when: not nextcloud_config.stat.exists
-
-    - name: Add trusted domains to Nextcloud configuration
+      
+    - name: Добавление домена в trusted_domains
       lineinfile:
         path: /var/www/html/nextcloud/config/config.php
         regexp: "^\\s*'trusted_domains' =>"
-        line: |
-          'trusted_domains' => array (
-              0 => 'localhost',
-              1 => '176.52.100.227',
-              2 => 'vvot3.itiscl.ru',
-              3 => '2001:db8::1234',  # Add IPv6 address
-          ),
+        line: "  'trusted_domains' => array ( 0 => 'localhost', 1 => '51.250.65.186', 2 => 'vvot03.itiscl.ru', 3 => '176.52.100.227', ),"
         insertafter: "'instanceid' =>"
-
   handlers:
-    - name: Restart Apache
+    - name: Перезапуск Apache
       service:
         name: apache2
         state: restarted
