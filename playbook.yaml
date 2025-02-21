@@ -137,12 +137,11 @@
           --admin-pass "{{ nextcloud_admin_password }}"
       when: not nextcloud_config.stat.exists
       
-    - name: Добавление домена в trusted_domains
-      lineinfile:
+    - name: Обновление trusted_domains в конфигурации Nextcloud
+      replace:
         path: /var/www/html/nextcloud/config/config.php
-        regexp: "^\\s*'trusted_domains' =>"
-        line: "  'trusted_domains' => array ( 0 => 'localhost', 1 => '51.250.65.186', 2 => 'vvot03.itiscl.ru', 3 => '176.52.100.227', ),"
-        insertafter: "'instanceid' =>"
+        regexp: "^\\s*'trusted_domains' =>.*$"
+        replace: "  'trusted_domains' => array ( 0 => 'localhost', 1 => '89.169.135.206', 2 => 'vvot03.itiscl.ru', 3 => '176.52.96.86' ),"
   handlers:
     - name: Перезапуск Apache
       service:
